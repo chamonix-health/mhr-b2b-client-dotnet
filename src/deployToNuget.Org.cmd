@@ -1,10 +1,6 @@
 del *.nupkg
 
-nuget restore
-
-msbuild PCEHR.sln /p:Configuration=Release
-
-NuGet.exe pack PCEHR/PCEHR.csproj -Properties Configuration=Release
+dotnet pack .\PCEHR\PCEHR.csproj -c Release -o .
 
 pause
 

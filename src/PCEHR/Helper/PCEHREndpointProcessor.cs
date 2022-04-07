@@ -20,12 +20,11 @@ using System.Security.Cryptography.X509Certificates;
 using System.ServiceModel;
 using System.ServiceModel.Channels;
 using System.ServiceModel.Description;
+using System.ServiceModel.Dispatcher;
 using System.Text.RegularExpressions;
 using System.Xml;
 using System.IO;
-using System.Security.Cryptography.Xml;
 using System.Xml.Linq;
-using System.ServiceModel.Dispatcher;
 using Nehta.VendorLibrary.Common;
 using System.Web;
 
@@ -53,7 +52,7 @@ namespace Nehta.VendorLibrary.PCEHR
             InspectorBehavior newBehavior = new InspectorBehavior(soapMessages, signingCertificate);
 
             // Add the behavior
-            endpoint.Behaviors.Add(newBehavior);
+            endpoint.EndpointBehaviors.Add(newBehavior);
         }
 
         /// <summary>
@@ -81,7 +80,7 @@ namespace Nehta.VendorLibrary.PCEHR
                 return message.Substring(match.Index, match.Length);
             }
 
-            public object BeforeSendRequest(ref System.ServiceModel.Channels.Message request, System.ServiceModel.IClientChannel channel)
+            public object BeforeSendRequest(ref Message request, IClientChannel channel)
             {
                 string startInfo = "application/soap+xml";
                 string boundary = string.Format("uuid:{0}+id=1", Guid.NewGuid());
@@ -108,7 +107,11 @@ namespace Nehta.VendorLibrary.PCEHR
                 // Encoding message into MTOM format using MTOM writer
                 request = msgBuffer.CreateMessage();
                 var initialMs = new MemoryStream();
+#if NETSTANDARD2_0
+                var initialWriter = MtomHelper.CreateMtomWriter(initialMs, Encoding.UTF8, int.MaxValue, startInfo, boundary, startUri, true, true);
+#else
                 var initialWriter = XmlDictionaryWriter.CreateMtomWriter(initialMs, Encoding.UTF8, int.MaxValue, startInfo, boundary, startUri, true, true);
+#endif
                 request.WriteMessage(initialWriter);
                 initialWriter.Flush();
 
@@ -170,7 +173,11 @@ namespace Nehta.VendorLibrary.PCEHR
                 soapMessages.MtomRequest = mimeContent;
 
                 // Recreate request (Message) using MTOM reader
+#if NETSTANDARD2_0
+                var outputReader = MtomHelper.CreateMtomReader(mimeContent, 0, mimeContent.Length, Encoding.UTF8, new XmlDictionaryReaderQuotas());
+#else
                 var outputReader = XmlDictionaryReader.CreateMtomReader(mimeContent, 0, mimeContent.Length, Encoding.UTF8, new XmlDictionaryReaderQuotas());
+#endif
                 request = Message.CreateMessage(outputReader, int.MaxValue, request.Version);
 
                 // Dispose things
@@ -179,7 +186,7 @@ namespace Nehta.VendorLibrary.PCEHR
                 return null;
             }
 
-            public void AfterReceiveReply(ref System.ServiceModel.Channels.Message reply, object correlationState)
+            public void AfterReceiveReply(ref Message reply, object correlationState)
             {
                 MessageBuffer msgBuffer = reply.CreateBufferedCopy(int.MaxValue);
 
@@ -205,7 +212,7 @@ namespace Nehta.VendorLibrary.PCEHR
             /// </summary>
             /// <param name="msg">Message to convert.</param>
             /// <returns>Message as a string.</returns>
-            private string ConvertMessageToString(System.ServiceModel.Channels.Message msg)
+            private string ConvertMessageToString(Message msg)
             {
                 var ms = new MemoryStream();
                 var xw = XmlTextWriter.Create(ms, new XmlWriterSettings()
@@ -241,16 +248,16 @@ namespace Nehta.VendorLibrary.PCEHR
                 this.signingCertificate = signingCertificate;
             }
 
-            public void AddBindingParameters(ServiceEndpoint endpoint, System.ServiceModel.Channels.BindingParameterCollection bindingParameters)
+            public void AddBindingParameters(ServiceEndpoint endpoint, BindingParameterCollection bindingParameters)
             {
             }
 
-            public void ApplyClientBehavior(ServiceEndpoint endpoint, System.ServiceModel.Dispatcher.ClientRuntime clientRuntime)
+            public void ApplyClientBehavior(ServiceEndpoint endpoint, ClientRuntime clientRuntime)
             {
-                clientRuntime.MessageInspectors.Add(new MessageInspector(soapMessages, signingCertificate));
+                clientRuntime.ClientMessageInspectors.Add(new MessageInspector(soapMessages, signingCertificate));
             }
 
-            public void ApplyDispatchBehavior(ServiceEndpoint endpoint, System.ServiceModel.Dispatcher.EndpointDispatcher endpointDispatcher)
+            public void ApplyDispatchBehavior(ServiceEndpoint endpoint, EndpointDispatcher endpointDispatcher)
             {
             }
 

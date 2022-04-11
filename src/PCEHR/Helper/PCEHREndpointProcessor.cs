@@ -82,10 +82,6 @@ namespace Nehta.VendorLibrary.PCEHR
 
             public object BeforeSendRequest(ref Message request, IClientChannel channel)
             {
-                string startInfo = "application/soap+xml";
-                string boundary = string.Format("uuid:{0}+id=1", Guid.NewGuid());
-                string startUri = "http://tempuri.org/0";
-
                 // Set message ID
                 UniqueId messageId = new UniqueId();
                 soapMessages.SoapRequestMessageId = messageId.ToString();
@@ -103,17 +99,16 @@ namespace Nehta.VendorLibrary.PCEHR
                 var bigXml = ConvertMessageToString(messageToSign);
                 var signedBigXml = Encoding.UTF8.GetString(SoapSignatureUtility.SignBodyAndAddressingHeaders(Encoding.UTF8.GetBytes(bigXml), signingCertificate));
                 soapMessages.SoapRequest = signedBigXml;
-                               
+
+                // Common encoder setup for MTOM handling
+                var mtomBE = new MtomMessageEncodingBindingElement(request.Version, Encoding.UTF8);
+                var encoderFactory = mtomBE.CreateMessageEncoderFactory();
+                var encoder = encoderFactory.Encoder;
+
                 // Encoding message into MTOM format using MTOM writer
                 request = msgBuffer.CreateMessage();
                 var initialMs = new MemoryStream();
-#if NETSTANDARD2_0
-                var initialWriter = MtomHelper.CreateMtomWriter(initialMs, Encoding.UTF8, int.MaxValue, startInfo, boundary, startUri, true, true);
-#else
-                var initialWriter = XmlDictionaryWriter.CreateMtomWriter(initialMs, Encoding.UTF8, int.MaxValue, startInfo, boundary, startUri, true, true);
-#endif
-                request.WriteMessage(initialWriter);
-                initialWriter.Flush();
+                encoder.WriteMessage(request, initialMs);
 
                 var originalMessageSize = (int) initialMs.Length;
 
@@ -169,16 +164,14 @@ namespace Nehta.VendorLibrary.PCEHR
                 // Copy MIME end content to after signed SOAP XML
                 Array.Copy(bufferUnsigned, endSoapIndex, bufferSigned, startSoapIndex + signedXmlArray.Length, bufferUnsigned.Length - (endSoapIndex + 1));
 
-                var mimeContent = new ArraySegment<byte>(bufferSigned, 0, originalMessageSize + diff).Array;
-                soapMessages.MtomRequest = mimeContent;
+                var mimeContent = new ArraySegment<byte>(bufferSigned, 0, originalMessageSize + diff);
+                soapMessages.MtomRequest = mimeContent.Array;
 
                 // Recreate request (Message) using MTOM reader
-#if NETSTANDARD2_0
-                var outputReader = MtomHelper.CreateMtomReader(mimeContent, 0, mimeContent.Length, Encoding.UTF8, new XmlDictionaryReaderQuotas());
-#else
-                var outputReader = XmlDictionaryReader.CreateMtomReader(mimeContent, 0, mimeContent.Length, Encoding.UTF8, new XmlDictionaryReaderQuotas());
-#endif
-                request = Message.CreateMessage(outputReader, int.MaxValue, request.Version);
+                var message = encoder.ReadMessage(mimeContent, BufferManager.CreateBufferManager(int.MaxValue, int.MaxValue));
+                var messageBufferedCopy = message.CreateBufferedCopy(int.MaxValue);
+                request = messageBufferedCopy.CreateMessage();
+                messageBufferedCopy.Close();
 
                 // Dispose things
                 msgBuffer.Close();
